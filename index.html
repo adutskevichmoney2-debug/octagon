@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Октагон — кинетический этюд № 08</title>
 <meta name="description" content="Физически точная симуляция: упругие мячи внутри вращающегося восьмиугольника. Импульсные столкновения, трение, передача вращения, соударения мячей. Canvas 2D, 480 Гц.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='27.1,20.6 20.6,27.1 11.4,27.1 4.9,20.6 4.9,11.4 11.4,4.9 20.6,4.9 27.1,11.4' fill='none' stroke='%23d8b57a' stroke-width='2'/%3E%3Ccircle cx='16' cy='18.5' r='3.4' fill='%23f0d9a8'/%3E%3C/svg%3E">
@@ -144,6 +144,8 @@
   }
 
   .sep{ width:1px; align-self:stretch; background:rgba(236,231,218,.08); }
+  #controls{ scrollbar-width:none; }
+  #controls::-webkit-scrollbar{ display:none; }
 
   .btns{ display:flex; gap:8px; }
   .btns button{
@@ -191,17 +193,28 @@
 
   @media (max-width: 1450px){ .hint, .credits{ display:none; } }
   @media (max-width: 900px){ #stats{ display:none; } }
-  @media (max-width: 860px){
+  @media (max-width: 980px){
     #controls{
       flex-wrap:wrap; justify-content:center;
-      width:min(94vw, 540px); gap:12px 20px; padding:14px 16px;
+      width:min(94vw, 560px); gap:10px 18px; padding:12px 14px;
+      bottom:calc(10px + env(safe-area-inset-bottom, 0px));
+      border-radius:16px;
     }
-    .ctl{ width:calc(50% - 14px); }
+    .ctl{ width:calc(50% - 12px); }
+    .ctl-head{ margin-bottom:6px; }
     .sep{ display:none; }
     .btns{ width:100%; justify-content:center; padding-top:2px; }
+    .btns button{ width:34px; height:34px; }
     .sub{ display:none; }
   }
-  @media (max-height: 500px){
+  @media (max-height: 520px){
+    #controls{
+      flex-wrap:nowrap; overflow-x:auto; justify-content:flex-start;
+      width:auto; max-width:96vw; gap:14px; padding:10px 14px;
+      bottom:calc(8px + env(safe-area-inset-bottom, 0px));
+    }
+    .ctl{ width:118px; flex:0 0 auto; }
+    .btns{ width:auto; flex:0 0 auto; padding-top:0; }
     h1{ font-size:18px; margin-top:6px; }
     .sub{ display:none; }
   }
@@ -829,8 +842,28 @@ function resize(){
 
   S.w = w; S.h = h; S.dpr = dpr;
   S.cx = w / 2;
-  S.cy = h * 0.478;
-  S.R  = Math.max(110, Math.min(w * 0.40, h * 0.30));
+
+  // компоновка по реальным границам интерфейса:
+  // фигура с безелем и цифрами (≈1.30·R) должна умещаться между
+  // низом шапки и верхом панели управления — на любом экране
+  const FIT = 1.30;
+  const pad = Math.max(10, h * 0.015);
+  let topL = Math.min(96, h * 0.18);
+  let botL = h - Math.min(120, h * 0.25);
+  const brandEl = document.querySelector('.brand');
+  if (brandEl){
+    const r = brandEl.getBoundingClientRect();
+    if (r.height > 0) topL = Math.min(r.bottom + pad, h * 0.4);
+  }
+  const ctrlEl = document.getElementById('controls');
+  if (ctrlEl){
+    const r = ctrlEl.getBoundingClientRect();
+    if (r.height > 0) botL = Math.max(Math.min(r.top - pad, h - 40), h * 0.5);
+  }
+  const availH = Math.max(150, botL - topL);
+  const availW = w * 0.96;
+  S.cy = (topL + botL) / 2;
+  S.R  = Math.min(430, Math.max(72, Math.min(availH, availW) / 2 / FIT));
   S.bezelR = S.R * 1.13;
   S.PPM = S.R / 1.4;
   S.rBase = Math.max(9, Math.min(S.R * 0.085, 26));
@@ -1319,6 +1352,12 @@ function frame(now){
 
 /* ── запуск ──────────────────────────────────────────────── */
 addEventListener('resize', resize);
+addEventListener('orientationchange', () => setTimeout(resize, 60));
+addEventListener('load', () => resize());
+if (window.visualViewport) visualViewport.addEventListener('resize', () => {
+  if (innerWidth !== S.w || innerHeight !== S.h) resize();
+});
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => resize());
 document.addEventListener('visibilitychange', () => { last = performance.now(); });
 
 resize();
