@@ -1,0 +1,1253 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Октагон — кинетический этюд № 08</title>
+<meta name="description" content="Физически точная симуляция: упругие мячи внутри вращающегося восьмиугольника. Импульсные столкновения, трение, передача вращения, соударения мячей. Canvas 2D, 480 Гц.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='27.1,20.6 20.6,27.1 11.4,27.1 4.9,20.6 4.9,11.4 11.4,4.9 20.6,4.9 27.1,11.4' fill='none' stroke='%23d8b57a' stroke-width='2'/%3E%3Ccircle cx='16' cy='18.5' r='3.4' fill='%23f0d9a8'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@200;300;500&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body{
+    font-family:'Manrope', system-ui, sans-serif;
+    background:#06070a;
+    color:#ece7da;
+    overflow:hidden;
+    height:100vh; height:100dvh;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+    user-select:none; -webkit-user-select:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+  ::selection{ background:rgba(216,181,122,.28); }
+  :focus-visible{ outline:1px solid rgba(216,181,122,.75); outline-offset:3px; border-radius:4px; }
+
+  #stage{ position:fixed; inset:0; }
+  canvas{
+    position:absolute; inset:0; display:block;
+    touch-action:none; cursor:default;
+    opacity:0; transition:opacity 1.6s ease .1s;
+  }
+  body.ready canvas{ opacity:1; }
+
+  /* ── film grain ─────────────────────────────────────────── */
+  .grain{
+    position:fixed; inset:0; z-index:40; pointer-events:none;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-size:180px 180px;
+    opacity:.05; mix-blend-mode:overlay;
+  }
+
+  /* ── intro reveal ───────────────────────────────────────── */
+  .fx{ opacity:0; transform:translateY(12px); transition:opacity .9s cubic-bezier(.2,.6,.2,1), transform .9s cubic-bezier(.2,.6,.2,1); }
+  body.ready .fx{ opacity:1; transform:none; }
+  .d1{ transition-delay:.15s; } .d2{ transition-delay:.3s; } .d3{ transition-delay:.45s; } .d4{ transition-delay:.6s; }
+
+  /* ── header ─────────────────────────────────────────────── */
+  header{
+    position:absolute; top:0; left:0; right:0; z-index:10;
+    padding:clamp(18px,3.4vh,34px) clamp(20px,3vw,42px);
+    display:flex; justify-content:space-between; align-items:flex-start;
+    pointer-events:none;
+  }
+  .eyebrow{
+    font-size:10px; font-weight:600; letter-spacing:.34em; text-transform:uppercase;
+    color:#d8b57a;
+  }
+  .eyebrow::before{
+    content:""; display:inline-block; width:24px; height:1px;
+    background:linear-gradient(90deg,#d8b57a,transparent);
+    vertical-align:middle; margin-right:11px; transform:translateY(-1px);
+  }
+  h1{
+    font-family:'Unbounded', sans-serif; font-weight:300;
+    font-size:clamp(21px,2.9vw,33px);
+    letter-spacing:.14em; text-transform:uppercase;
+    color:#f2edde; margin-top:11px;
+  }
+  h1 sup{
+    font-size:.42em; font-weight:200; color:#d8b57a;
+    letter-spacing:.22em; vertical-align:super; margin-left:.55em;
+  }
+  .sub{ margin-top:9px; font-size:12px; font-weight:500; color:#8f8b80; letter-spacing:.03em; }
+
+  /* ── stats ──────────────────────────────────────────────── */
+  #stats{
+    font-family:'JetBrains Mono', monospace;
+    min-width:198px; pointer-events:none;
+  }
+  #stats .row{
+    display:flex; justify-content:space-between; align-items:baseline; gap:20px;
+    padding:7px 1px;
+    border-bottom:1px solid rgba(236,231,218,.07);
+  }
+  #stats .row:first-child{ border-top:1px solid rgba(236,231,218,.07); }
+  #stats .k{ font-size:9px; letter-spacing:.18em; color:#7c786c; text-transform:uppercase; }
+  #stats .v{ font-size:11.5px; color:#e6ddc4; font-variant-numeric:tabular-nums; white-space:nowrap; }
+
+  /* ── control panel ──────────────────────────────────────── */
+  #controls{
+    position:absolute; left:50%; bottom:clamp(14px,3.4vh,30px); transform:translateX(-50%);
+    z-index:20;
+    display:flex; align-items:center; gap:clamp(12px,1.6vw,24px);
+    padding:15px clamp(14px,1.8vw,24px);
+    background:linear-gradient(180deg, rgba(17,19,25,.6), rgba(9,10,14,.68));
+    border:1px solid rgba(236,231,218,.09);
+    border-radius:18px;
+    backdrop-filter:blur(22px) saturate(130%);
+    -webkit-backdrop-filter:blur(22px) saturate(130%);
+    box-shadow:0 34px 70px -22px rgba(0,0,0,.75), inset 0 1px 0 rgba(255,255,255,.045);
+  }
+  #controls.fx{ transform:translateX(-50%) translateY(12px); }
+  body.ready #controls.fx{ transform:translateX(-50%); }
+
+  .ctl{ width:clamp(104px,10vw,132px); }
+  .ctl-head{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; gap:8px; }
+  .ctl-head label{
+    font-size:9px; font-weight:600; letter-spacing:.2em; text-transform:uppercase;
+    color:#8f8b80; white-space:nowrap;
+  }
+  .ctl-head output{
+    font-family:'JetBrains Mono', monospace; font-size:10.5px; color:#d8b57a;
+    white-space:nowrap; font-variant-numeric:tabular-nums;
+  }
+  input[type=range]{
+    -webkit-appearance:none; appearance:none;
+    width:100%; height:20px; background:transparent; cursor:pointer;
+  }
+  input[type=range]::-webkit-slider-runnable-track{
+    height:2px; border-radius:1px;
+    background:linear-gradient(90deg, rgba(216,181,122,.55), rgba(236,231,218,.13));
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none;
+    width:12px; height:12px; border-radius:50%; margin-top:-5px;
+    background:radial-gradient(circle at 35% 30%, #f6e3b6, #c9a15e);
+    border:1px solid rgba(0,0,0,.45);
+    box-shadow:0 0 0 3px rgba(216,181,122,.12), 0 2px 7px rgba(0,0,0,.55);
+    transition:box-shadow .2s ease;
+  }
+  input[type=range]:hover::-webkit-slider-thumb{ box-shadow:0 0 0 5px rgba(216,181,122,.18), 0 2px 7px rgba(0,0,0,.55); }
+  input[type=range]::-moz-range-track{
+    height:2px; border-radius:1px;
+    background:linear-gradient(90deg, rgba(216,181,122,.55), rgba(236,231,218,.13));
+  }
+  input[type=range]::-moz-range-thumb{
+    width:11px; height:11px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, #f6e3b6, #c9a15e);
+    border:1px solid rgba(0,0,0,.45);
+    box-shadow:0 0 0 3px rgba(216,181,122,.12), 0 2px 7px rgba(0,0,0,.55);
+  }
+
+  .sep{ width:1px; align-self:stretch; background:rgba(236,231,218,.08); }
+
+  .btns{ display:flex; gap:8px; }
+  .btns button{
+    width:36px; height:36px; display:grid; place-items:center;
+    background:transparent; color:#b3ae9f;
+    border:1px solid rgba(236,231,218,.13); border-radius:11px;
+    cursor:pointer;
+    transition:border-color .22s ease, color .22s ease, box-shadow .22s ease, transform .22s ease, background .22s ease, opacity .22s ease;
+  }
+  .btns button:hover{
+    border-color:rgba(216,181,122,.55); color:#ecd6a4;
+    box-shadow:0 0 20px -5px rgba(216,181,122,.4);
+    transform:translateY(-1px);
+  }
+  .btns button:active{ transform:translateY(0); }
+  .btns button.on{
+    background:rgba(216,181,122,.13);
+    border-color:rgba(216,181,122,.55);
+    color:#ecd6a4;
+  }
+  .btns button:disabled{ opacity:.28; pointer-events:none; }
+  .btns svg{ width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+  button.pulse{ animation:pulse 2.2s ease-in-out infinite; }
+  @keyframes pulse{
+    0%,100%{ box-shadow:0 0 0 0 rgba(216,181,122,0); }
+    50%{ box-shadow:0 0 24px -2px rgba(216,181,122,.55); }
+  }
+
+  /* ── footer notes ───────────────────────────────────────── */
+  .hint, .credits{
+    position:absolute; bottom:clamp(18px,3.2vh,30px); z-index:10;
+    font-family:'JetBrains Mono', monospace; font-size:10px;
+    color:#716e63; letter-spacing:.06em;
+    pointer-events:none;
+    transition:opacity 1.2s ease;
+  }
+  .hint{ left:clamp(20px,3vw,42px); max-width:176px; line-height:1.85; }
+  .hint em{ font-style:normal; color:#c2a06a; }
+  .hint.hide{ opacity:0; }
+  .credits{ right:clamp(20px,3vw,42px); text-align:right; color:#57554c; max-width:170px; line-height:1.85; }
+
+  @media (max-width: 1450px){ .hint, .credits{ display:none; } }
+  @media (max-width: 900px){ #stats{ display:none; } }
+  @media (max-width: 860px){
+    #controls{
+      flex-wrap:wrap; justify-content:center;
+      width:min(94vw, 540px); gap:12px 20px; padding:14px 16px;
+    }
+    .ctl{ width:calc(50% - 14px); }
+    .sep{ display:none; }
+    .btns{ width:100%; justify-content:center; padding-top:2px; }
+    .sub{ display:none; }
+  }
+  @media (max-height: 500px){
+    h1{ font-size:18px; margin-top:6px; }
+    .sub{ display:none; }
+  }
+  @media (prefers-reduced-motion: reduce){
+    .fx, canvas{ transition:none; }
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv" aria-label="Симуляция: мячи внутри вращающегося восьмиугольника"></canvas>
+
+  <header>
+    <div class="brand">
+      <div class="eyebrow fx">Кинетический этюд · № 08</div>
+      <h1 class="fx d1">Октагон<sup>VIII</sup></h1>
+      <div class="sub fx d2">Жёсткие тела · перенос импульса и вращения · 480 Гц</div>
+    </div>
+    <div id="stats" class="fx d2" aria-hidden="true">
+      <div class="row"><span class="k">Мячи</span><span class="v" id="h-balls">3</span></div>
+      <div class="row"><span class="k">Скорость</span><span class="v" id="h-speed">0.00 м/с</span></div>
+      <div class="row"><span class="k">Соударения</span><span class="v" id="h-imp">0</span></div>
+      <div class="row"><span class="k">Частота</span><span class="v" id="h-fps">60 к/с</span></div>
+    </div>
+  </header>
+
+  <div id="controls" class="fx d3" role="group" aria-label="Управление симуляцией">
+    <div class="ctl">
+      <div class="ctl-head"><label for="s-rot">Вращение</label><output id="v-rot">6.0 об/мин</output></div>
+      <input type="range" id="s-rot" min="-20" max="20" step="0.5" value="6" aria-label="Скорость вращения восьмиугольника">
+    </div>
+    <div class="ctl">
+      <div class="ctl-head"><label for="s-grav">Гравитация</label><output id="v-grav">1.00 g</output></div>
+      <input type="range" id="s-grav" min="0" max="2" step="0.01" value="1" aria-label="Гравитация">
+    </div>
+    <div class="ctl">
+      <div class="ctl-head"><label for="s-rest">Упругость</label><output id="v-rest">86%</output></div>
+      <input type="range" id="s-rest" min="0.3" max="0.98" step="0.01" value="0.86" aria-label="Коэффициент упругости">
+    </div>
+    <div class="ctl">
+      <div class="ctl-head"><label for="s-mu">Трение</label><output id="v-mu">0.35</output></div>
+      <input type="range" id="s-mu" min="0" max="0.9" step="0.01" value="0.35" aria-label="Коэффициент трения">
+    </div>
+    <div class="sep"></div>
+    <div class="btns">
+      <button id="b-add" title="Добавить мяч" aria-label="Добавить мяч">
+        <svg viewBox="0 0 16 16"><path d="M8 3.2v9.6M3.2 8h9.6"/></svg>
+      </button>
+      <button id="b-del" title="Убрать мяч" aria-label="Убрать мяч">
+        <svg viewBox="0 0 16 16"><path d="M3.2 8h9.6"/></svg>
+      </button>
+      <button id="b-pause" title="Пауза — пробел" aria-label="Пауза">
+        <svg id="i-pause" viewBox="0 0 16 16"><path d="M5.2 3.2v9.6M10.8 3.2v9.6"/></svg>
+        <svg id="i-play" viewBox="0 0 16 16" style="display:none"><path d="M5.4 3.2l7 4.8-7 4.8z"/></svg>
+      </button>
+      <button id="b-reset" title="Сброс — R" aria-label="Сброс">
+        <svg viewBox="0 0 16 16"><path d="M13.2 8A5.2 5.2 0 1 1 11.6 4.2"/><path d="M13.5 2.4v3h-3"/></svg>
+      </button>
+      <button id="b-trail" class="on" title="След мячей" aria-label="След мячей" aria-pressed="true">
+        <svg viewBox="0 0 16 16"><circle cx="11.8" cy="4.2" r="2"/><path d="M9.9 5.9L3 12.8"/><path d="M12.3 7.7L7.8 12.2"/></svg>
+      </button>
+      <button id="b-sound" title="Звук ударов" aria-label="Звук ударов" aria-pressed="false">
+        <svg viewBox="0 0 16 16">
+          <path d="M2.8 6.2v3.6h2.4L8.6 13V3L5.2 6.2H2.8z"/>
+          <path class="wv" d="M11 5.6a3.4 3.4 0 0 1 0 4.8"/>
+          <path class="sl" d="M11 6.3l3.4 3.4M14.4 6.3L11 9.7"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="hint fx d4" id="hint">перетащите мяч, чтобы бросить<br><em>дв. клик</em> — новый мяч<br>пробел — пауза · R — сброс</div>
+  <div class="credits fx d4">canvas 2d · физика 480 гц · без библиотек</div>
+
+  <div class="grain"></div>
+</div>
+
+<noscript><p style="position:fixed;inset:0;display:grid;place-items:center;color:#ece7da;font-family:sans-serif">Для симуляции нужен включённый JavaScript.</p></noscript>
+
+<script>
+'use strict';
+/* ============================================================
+   ОКТАГОН — кинетический этюд № 08 · мультитело
+   Физика: импульсные столкновения жёстких дисков с вращающимся
+   выпуклым многоугольником и друг с другом.
+   · скорость стены в точке контакта:  u = ω × r
+   · мяч-мяч: импульсы с учётом масс (m ∝ r²), реституция,
+     кулоново трение и взаимная передача вращения (I = ½mr²)
+   · порог реституции — спокойное качение и устойчивые кучи
+   · сопротивление качению + лёгкое аэродинамическое затухание
+   · 480 Гц фиксированные подшаги — без туннелирования
+   ============================================================ */
+
+const cv  = document.getElementById('cv');
+const ctx = cv.getContext('2d', { alpha:false });
+const el  = id => document.getElementById(id);
+
+/*__PHYS_BEGIN__*/
+const TAU      = Math.PI * 2;
+const SIDES    = 8;
+const FIXED_DT = 1 / 480;   // шаг физики, с
+const AIR_K    = 0.025;     // аэродинамическое затухание, 1/с
+const SPIN_K   = 0.05;      // затухание вращения в воздухе, 1/с
+const MUR      = 0.02;      // коэффициент сопротивления качению
+const VMAX     = 5200;      // предельная скорость, px/с
+const SPINMAX  = 70;        // предельное вращение, рад/с
+const MAXB     = 12;        // максимум мячей
+const MINB     = 1;
+
+const S = {
+  w:0, h:0, dpr:1,
+  cx:0, cy:0,
+  R:300, bezelR:340, PPM:214, rBase:22,
+  theta:0,
+  rpm:6, gMul:1, rest:0.86, mu:0.35,
+  trail:true, sound:false, paused:false,
+  impacts:0, fps:60,
+};
+const balls = [];
+const drag  = { on:false, idx:-1, id:-1, x:0, y:0, vx:0, vy:0, px:0, py:0, lastT:0, offx:0, offy:0 };
+
+const VX = new Float64Array(SIDES + 1);
+const VY = new Float64Array(SIDES + 1);
+
+const omega = () => S.rpm * TAU / 60;            // рад/с
+const gAbs  = () => S.gMul * 9.81 * S.PPM;       // px/с²
+const isKin = b => drag.on && balls[drag.idx] === b;
+
+function newBall(k, pi, x, y, vx, vy){
+  return {
+    x, y, vx, vy,
+    k, r: S.rBase * k,
+    m: k * k, invM: 1 / (k * k),
+    spin: 0, ang: Math.random() * TAU,
+    pi, trail: [], born: 0, grad: null,
+  };
+}
+
+function computeVerts(){
+  for (let i = 0; i < SIDES; i++){
+    const a = S.theta + Math.PI / 8 + i * (TAU / SIDES);
+    VX[i] = S.cx + Math.cos(a) * S.R;
+    VY[i] = S.cy + Math.sin(a) * S.R;
+  }
+  VX[SIDES] = VX[0];
+  VY[SIDES] = VY[0];
+}
+
+function insideOctagon(x, y, margin){
+  for (let i = 0; i < SIDES; i++){
+    const ax = VX[i], ay = VY[i], bx = VX[i+1], by = VY[i+1];
+    let nx = S.cx - (ax + bx) * 0.5, ny = S.cy - (ay + by) * 0.5;
+    const nl = Math.hypot(nx, ny); nx /= nl; ny /= nl;
+    if ((x - ax) * nx + (y - ay) * ny < margin) return false;
+  }
+  return true;
+}
+
+/* Подбор места для нового мяча: внутри фигуры, без пересечений */
+function spawnBall(pi, ax, ay){
+  computeVerts();
+  const k = 0.8 + Math.random() * 0.35;
+  const r = S.rBase * k;
+  let px = 0, py = 0, found = false;
+
+  for (let t = 0; t < 70; t++){
+    if (t === 0 && ax !== undefined){ px = ax; py = ay; }
+    else {
+      px = S.cx + (Math.random() * 2 - 1) * S.R * 0.55;
+      py = S.cy + (Math.random() * 2 - 1) * S.R * 0.55;
+    }
+    if (!insideOctagon(px, py, r + 6)) continue;
+    let ok = true;
+    for (const b of balls){
+      if (Math.hypot(px - b.x, py - b.y) < r + b.r + 3){ ok = false; break; }
+    }
+    if (ok){ found = true; break; }
+  }
+  if (!found){
+    if (!insideOctagon(px = S.cx, py = S.cy, r + 6)) return null;
+  }
+  const sp = S.PPM * (0.4 + Math.random() * 0.9);
+  const a = Math.random() * TAU;
+  return newBall(k, pi, px, py, Math.cos(a) * sp, Math.sin(a) * sp * 0.6 - S.PPM * 0.2);
+}
+
+/* Мяч ↔ стена: ближайшая точка ребра, выталкивание, импульс
+   по нормали с реституцией, трение по касательной, качение. */
+function collideWall(b, dt, kin){
+  const om = omega(), r = b.r;
+  const restThresh = S.PPM * 0.42;
+  let touched = false;
+
+  for (let i = 0; i < SIDES; i++){
+    const ax = VX[i], ay = VY[i], bx = VX[i+1], by = VY[i+1];
+    const ex = bx - ax, ey = by - ay;
+    const invL2 = 1 / (ex*ex + ey*ey);
+    let t = ((b.x - ax) * ex + (b.y - ay) * ey) * invL2;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const qx = ax + ex * t, qy = ay + ey * t;
+    const dx = b.x - qx, dy = b.y - qy;
+    const d2 = dx*dx + dy*dy;
+
+    let nx = S.cx - (ax + bx) * 0.5, ny = S.cy - (ay + by) * 0.5;
+    const nl = Math.hypot(nx, ny); nx /= nl; ny /= nl;
+    const sd = (b.x - ax) * nx + (b.y - ay) * ny;
+
+    let cnx, cny, pen;
+    if (sd > 0 && d2 > 1e-12){
+      const d = Math.sqrt(d2);
+      if (d >= r) continue;
+      cnx = dx / d; cny = dy / d; pen = r - d;
+    } else {
+      cnx = nx; cny = ny; pen = r - sd;
+    }
+    touched = true;
+
+    b.x += cnx * pen;
+    b.y += cny * pen;
+    if (kin) continue;                       // удерживаемый мяч: только позиция
+
+    const rx = qx - S.cx, ry = qy - S.cy;
+    const ux = -om * ry,  uy = om * rx;      // u = ω × r
+
+    let rvx = b.vx - ux, rvy = b.vy - uy;
+    const vn = rvx * cnx + rvy * cny;
+    const tx = -cny, ty = cnx;
+
+    if (vn < 0){
+      const e  = vn < -restThresh ? S.rest : 0;
+      const jn = -(1 + e) * vn;
+      b.vx += cnx * jn;
+      b.vy += cny * jn;
+
+      rvx = b.vx - ux; rvy = b.vy - uy;
+      const vt   = rvx * tx + rvy * ty;
+      const slip = vt - b.spin * r;
+      let jt = -slip / 3;                    // диск: 1/m + r²/I = 3/m
+      const jm = S.mu * jn;
+      if (jt >  jm) jt =  jm;
+      if (jt < -jm) jt = -jm;
+      b.vx += tx * jt;
+      b.vy += ty * jt;
+      b.spin -= 2 * jt / r;
+
+      if (vn < -restThresh){
+        S.impacts++;
+        onImpact(qx, qy, -vn, 'wall');
+      }
+    }
+
+    // сопротивление качению
+    {
+      rvx = b.vx - ux; rvy = b.vy - uy;
+      const vt   = rvx * tx + rvy * ty;
+      const slip = vt - b.spin * r;
+      if (Math.abs(slip) < 40){
+        const dec = MUR * gAbs() * dt;
+        const nv  = Math.abs(vt) <= dec ? 0 : vt - Math.sign(vt) * dec;
+        const dV  = nv - vt;
+        b.vx += tx * dV;
+        b.vy += ty * dV;
+        b.spin = nv / r;
+      }
+    }
+  }
+  return touched;
+}
+
+/* Мяч ↔ мяч: разведение по обратным массам, импульс по нормали,
+   трение с обменом вращением. Удерживаемый мяч — как бесконечная
+   масса по переносу, но свободен по вращению. */
+function collidePair(a, b, posOnly){
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const rs = a.r + b.r;
+  const d2 = dx*dx + dy*dy;
+  if (d2 >= rs * rs) return false;
+
+  let d = Math.sqrt(d2), nx, ny;
+  if (d < 1e-9){ nx = 1; ny = 0; d = 1e-9; }
+  else { nx = dx / d; ny = dy / d; }
+  const pen = rs - d;
+
+  const ia = isKin(a) ? 0 : a.invM;
+  const ib = isKin(b) ? 0 : b.invM;
+  const isum = ia + ib;
+  if (isum > 0){
+    a.x -= nx * pen * (ia / isum);
+    a.y -= ny * pen * (ia / isum);
+    b.x += nx * pen * (ib / isum);
+    b.y += ny * pen * (ib / isum);
+  }
+  if (posOnly || isum === 0) return true;
+
+  const rvx = b.vx - a.vx, rvy = b.vy - a.vy;
+  const vn = rvx * nx + rvy * ny;
+  if (vn < 0){
+    const restThresh = S.PPM * 0.42;
+    const e  = -vn > restThresh ? S.rest : 0;
+    const jn = -(1 + e) * vn / isum;
+    a.vx -= nx * jn * ia; a.vy -= ny * jn * ia;
+    b.vx += nx * jn * ib; b.vy += ny * jn * ib;
+
+    // трение: проскальзывание поверхностей с учётом обоих вращений
+    const tx = -ny, ty = nx;
+    const s = ((b.vx - a.vx) * tx + (b.vy - a.vy) * ty) - (a.spin * a.r + b.spin * b.r);
+    const kRot = 2 * (a.invM + b.invM);      // вращение свободно даже у удерживаемого
+    let jt = -s / (isum + kRot);
+    const jm = S.mu * 0.6 * jn;
+    if (jt >  jm) jt =  jm;
+    if (jt < -jm) jt = -jm;
+    a.vx -= tx * jt * ia; a.vy -= ty * jt * ia;
+    b.vx += tx * jt * ib; b.vy += ty * jt * ib;
+    a.spin -= 2 * jt * a.invM / a.r;
+    b.spin -= 2 * jt * b.invM / b.r;
+
+    if (-vn > restThresh){
+      S.impacts++;
+      onImpact(a.x + nx * a.r, a.y + ny * a.r, -vn, 'ball');
+    }
+  }
+  return true;
+}
+
+function collideAll(dt){
+  computeVerts();
+  const n = balls.length;
+  for (let iter = 0; iter < 3; iter++){
+    let any = false;
+    for (let i = 0; i < n; i++){
+      if (collideWall(balls[i], dt, isKin(balls[i]))) any = true;
+    }
+    for (let i = 0; i < n; i++){
+      for (let j = i + 1; j < n; j++){
+        if (collidePair(balls[i], balls[j], false)) any = true;
+      }
+    }
+    if (!any) break;
+  }
+}
+
+function substep(dt){
+  S.theta = (S.theta + omega() * dt) % TAU;
+
+  const g = gAbs(), ad = Math.exp(-AIR_K * dt), sd = Math.exp(-SPIN_K * dt);
+  for (const b of balls){
+    if (!isKin(b)){
+      b.vy += g * dt;
+      b.vx *= ad; b.vy *= ad;
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+    }
+    b.ang += b.spin * dt;
+    b.spin *= sd;
+  }
+
+  collideAll(dt);
+
+  for (const b of balls){
+    const sp = Math.hypot(b.vx, b.vy);
+    if (sp > VMAX){ const k = VMAX / sp; b.vx *= k; b.vy *= k; }
+    if (b.spin >  SPINMAX) b.spin =  SPINMAX;
+    if (b.spin < -SPINMAX) b.spin = -SPINMAX;
+    if (!isFinite(b.x) || !isFinite(b.y) || !isFinite(b.vx) || !isFinite(b.vy)){
+      b.x = S.cx; b.y = S.cy; b.vx = 0; b.vy = 0; b.spin = 0; b.trail.length = 0;
+    }
+  }
+}
+/*__PHYS_END__*/
+
+/* ── палитра мячей ───────────────────────────────────────── */
+const PALETTE = [
+  { // слоновая кость
+    stops: [[0,'#fffdf6'],[0.3,'#f4ecd9'],[0.68,'#d8cdb2'],[0.92,'#a4977a'],[1,'#8d8166']],
+    marker:'rgba(96,78,46,0.28)', accent:'rgba(178,140,74,0.5)', ring:'rgba(96,78,46,0.12)',
+    trail:'224,190,130', glow:'236,208,150',
+  },
+  { // шампань
+    stops: [[0,'#fff7e0'],[0.3,'#f3dca6'],[0.68,'#d9b878'],[0.92,'#a2814c'],[1,'#84683c']],
+    marker:'rgba(90,66,30,0.3)', accent:'rgba(60,42,16,0.42)', ring:'rgba(90,66,30,0.14)',
+    trail:'232,196,124', glow:'240,206,138',
+  },
+  { // оникс
+    stops: [[0,'#9aa0ad'],[0.3,'#565b66'],[0.68,'#383b44'],[0.92,'#23252c'],[1,'#1b1d23']],
+    marker:'rgba(255,255,255,0.16)', accent:'rgba(216,181,122,0.55)', ring:'rgba(255,255,255,0.08)',
+    trail:'150,160,180', glow:'160,170,195',
+  },
+  { // гранат
+    stops: [[0,'#efb2a4'],[0.3,'#c4685a'],[0.68,'#93392f'],[0.92,'#63221c'],[1,'#4e1b16']],
+    marker:'rgba(40,12,8,0.35)', accent:'rgba(255,214,170,0.5)', ring:'rgba(40,12,8,0.16)',
+    trail:'226,140,116', glow:'232,150,124',
+  },
+];
+let nextPi = 0;
+
+/* ── эффекты ─────────────────────────────────────────────── */
+const ripples = [];
+
+function onImpact(qx, qy, vn, type){
+  if (type === 'wall') thock(qx, vn); else clack(qx, vn);
+  const strong = vn > S.PPM * (type === 'wall' ? 1.1 : 1.3);
+  if (strong && ripples.length < 14){
+    const s = Math.min(1, vn / (S.PPM * 6));
+    const sc = type === 'wall' ? 1 : 0.6;
+    ripples.push({ x:qx, y:qy, r:S.rBase * 0.45 * sc, a:(0.08 + 0.3 * s) * (type==='wall'?1:0.8), v:(200 + 340 * s) * sc });
+  }
+}
+
+/* ── звук (WebAudio, включается кнопкой) ─────────────────── */
+let AC = null, master = null, noiseBuf = null, lastSnd = 0, lastClk = 0;
+
+function ensureAudio(){
+  if (!AC){
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    AC = new Ctx();
+    const comp = AC.createDynamicsCompressor();
+    master = AC.createGain();
+    master.gain.value = 0.6;
+    master.connect(comp);
+    comp.connect(AC.destination);
+    noiseBuf = AC.createBuffer(1, Math.floor(AC.sampleRate * 0.05), AC.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  if (AC.state === 'suspended') AC.resume();
+}
+
+function panNode(x){
+  let out = master;
+  if (AC.createStereoPanner){
+    const p = AC.createStereoPanner();
+    p.pan.value = Math.max(-1, Math.min(1, (x - S.cx) / (S.R * 1.3)));
+    p.connect(master);
+    out = p;
+  }
+  return out;
+}
+
+/* глухой удар о стену */
+function thock(x, vn){
+  if (!S.sound || !AC) return;
+  const t = AC.currentTime;
+  if (t - lastSnd < 0.03) return;
+  lastSnd = t;
+  const s = Math.min(1, vn / (S.PPM * 5.5));
+  const out = panNode(x);
+  const o = AC.createOscillator(), g = AC.createGain();
+  const f0 = 150 + 260 * s;
+  o.type = 'sine';
+  o.frequency.setValueAtTime(f0, t);
+  o.frequency.exponentialRampToValueAtTime(Math.max(55, f0 * 0.45), t + 0.08);
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.exponentialRampToValueAtTime(0.09 + 0.5 * s * s, t + 0.005);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.1 + 0.05 * s);
+  o.connect(g); g.connect(out);
+  o.start(t); o.stop(t + 0.18);
+  const nb = AC.createBufferSource(); nb.buffer = noiseBuf;
+  const lp = AC.createBiquadFilter(); lp.type = 'lowpass';
+  lp.frequency.value = 900 + 3200 * s; lp.Q.value = 0.7;
+  const ng = AC.createGain();
+  ng.gain.setValueAtTime(0.04 + 0.26 * s, t);
+  ng.gain.exponentialRampToValueAtTime(0.001, t + 0.035);
+  nb.connect(lp); lp.connect(ng); ng.connect(out);
+  nb.start(t); nb.stop(t + 0.06);
+}
+
+/* звонкий щелчок мяча о мяч — бильярдный */
+function clack(x, vn){
+  if (!S.sound || !AC) return;
+  const t = AC.currentTime;
+  if (t - lastClk < 0.025) return;
+  lastClk = t;
+  const s = Math.min(1, vn / (S.PPM * 5));
+  const out = panNode(x);
+  const nb = AC.createBufferSource(); nb.buffer = noiseBuf;
+  const bp = AC.createBiquadFilter(); bp.type = 'bandpass';
+  bp.frequency.value = 2100 + 2300 * s; bp.Q.value = 1.4;
+  const ng = AC.createGain();
+  ng.gain.setValueAtTime(0.1 + 0.34 * s, t);
+  ng.gain.exponentialRampToValueAtTime(0.001, t + 0.018);
+  nb.connect(bp); bp.connect(ng); ng.connect(out);
+  nb.start(t); nb.stop(t + 0.04);
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(460 + 520 * s, t);
+  o.frequency.exponentialRampToValueAtTime(300 + 300 * s, t + 0.03);
+  g.gain.setValueAtTime(0.001, t);
+  g.gain.exponentialRampToValueAtTime(0.05 + 0.16 * s, t + 0.003);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.045);
+  o.connect(g); g.connect(out);
+  o.start(t); o.stop(t + 0.08);
+}
+
+/* ── графика: кэш градиентов и спрайтов ──────────────────── */
+let bgGrad, ambGrad, vinGrad, octGrad, octFill;
+let LOC = [], LOC2 = [];
+const bezelCv = document.createElement('canvas');
+let bezelHalf = 0;
+let darkSprite;
+const glowSprites = [];
+
+function makeRadialSprite(size, stops){
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+  for (const [o, col] of stops) gr.addColorStop(o, col);
+  g.fillStyle = gr;
+  g.fillRect(0, 0, size, size);
+  return c;
+}
+
+function buildBallGfx(b){
+  const r = b.r;
+  const st = PALETTE[b.pi].stops;
+  const g = ctx.createRadialGradient(-r*0.33, -r*0.4, r*0.08, 0, 0, r*1.02);
+  for (const [o, col] of st) g.addColorStop(o, col);
+  b.grad = g;
+}
+
+function buildGradients(){
+  const { w, h, cx, cy, R } = S;
+  bgGrad = ctx.createRadialGradient(cx, cy * 0.85, R * 0.2, cx, cy, Math.max(w, h) * 0.85);
+  bgGrad.addColorStop(0, '#0a0c11');
+  bgGrad.addColorStop(1, '#05060a');
+
+  ambGrad = ctx.createRadialGradient(cx, cy, R * 0.1, cx, cy, R * 1.55);
+  ambGrad.addColorStop(0, 'rgba(214,178,112,0.055)');
+  ambGrad.addColorStop(0.7, 'rgba(214,178,112,0.018)');
+  ambGrad.addColorStop(1, 'rgba(214,178,112,0)');
+
+  vinGrad = ctx.createRadialGradient(cx, cy, R * 0.95, cx, cy, Math.max(w, h) * 0.78);
+  vinGrad.addColorStop(0, 'rgba(0,0,0,0)');
+  vinGrad.addColorStop(1, 'rgba(0,0,0,0.52)');
+
+  octGrad = ctx.createLinearGradient(-R, -R, R, R);
+  octGrad.addColorStop(0,    '#f2ddab');
+  octGrad.addColorStop(0.45, '#d3b077');
+  octGrad.addColorStop(0.78, '#9c7c48');
+  octGrad.addColorStop(1,    '#7a5f36');
+
+  octFill = ctx.createRadialGradient(0, 0, R * 0.1, 0, 0, R);
+  octFill.addColorStop(0, 'rgba(226,196,138,0.05)');
+  octFill.addColorStop(0.75, 'rgba(226,196,138,0.012)');
+  octFill.addColorStop(1, 'rgba(226,196,138,0)');
+
+  LOC = []; LOC2 = [];
+  for (let i = 0; i < SIDES; i++){
+    const a = Math.PI / 8 + i * (TAU / SIDES);
+    LOC.push({ x: Math.cos(a) * R, y: Math.sin(a) * R });
+    LOC2.push({ x: Math.cos(a) * (R - 9), y: Math.sin(a) * (R - 9) });
+  }
+
+  glowSprites.length = 0;
+  for (const p of PALETTE){
+    glowSprites.push(makeRadialSprite(256, [
+      [0, 'rgba(' + p.glow + ',0.5)'],
+      [0.35, 'rgba(' + p.glow + ',0.16)'],
+      [1, 'rgba(' + p.glow + ',0)'],
+    ]));
+  }
+  darkSprite = makeRadialSprite(256, [
+    [0, 'rgba(0,0,0,0.5)'],
+    [0.55, 'rgba(0,0,0,0.18)'],
+    [1, 'rgba(0,0,0,0)'],
+  ]);
+
+  for (const b of balls) buildBallGfx(b);
+  buildBezel();
+}
+
+function buildBezel(){
+  const { R, dpr } = S;
+  const rB = S.bezelR;
+  bezelHalf = rB + Math.max(40, R * 0.16);
+  bezelCv.width = bezelCv.height = Math.ceil(bezelHalf * 2 * dpr);
+  const g = bezelCv.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.translate(bezelHalf, bezelHalf);
+
+  g.strokeStyle = 'rgba(236,231,218,0.10)';
+  g.lineWidth = 1;
+  g.beginPath(); g.arc(0, 0, rB, 0, TAU); g.stroke();
+  g.strokeStyle = 'rgba(236,231,218,0.045)';
+  g.beginPath(); g.arc(0, 0, R * 1.045, 0, TAU); g.stroke();
+
+  for (let i = 0; i < 96; i++){
+    const a = i * TAU / 96;
+    const major = i % 12 === 0;
+    const l1 = rB + 4;
+    const l2 = rB + 4 + (major ? 11 : 5);
+    g.strokeStyle = major ? 'rgba(216,181,122,0.55)' : 'rgba(236,231,218,0.16)';
+    g.lineWidth = major ? 1.2 : 1;
+    g.beginPath();
+    g.moveTo(Math.cos(a) * l1, Math.sin(a) * l1);
+    g.lineTo(Math.cos(a) * l2, Math.sin(a) * l2);
+    g.stroke();
+  }
+  const fs = Math.max(7, R * 0.028);
+  g.font = 500 + ' ' + fs + 'px "JetBrains Mono", monospace';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (let i = 0; i < 8; i++){
+    const a = i * TAU / 8;
+    const deg = Math.round(a * 180 / Math.PI);
+    const rr = rB + 14 + fs * 1.15;
+    g.fillStyle = i === 0 ? 'rgba(216,181,122,0.6)' : 'rgba(236,231,218,0.26)';
+    g.fillText(String(deg).padStart(3, '0'), Math.cos(a) * rr, Math.sin(a) * rr);
+  }
+}
+
+/* ── компоновка ──────────────────────────────────────────── */
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width  = Math.round(w * dpr);
+  cv.height = Math.round(h * dpr);
+  cv.style.width = w + 'px';
+  cv.style.height = h + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const oldR = S.R, oldCx = S.cx, oldCy = S.cy;
+
+  S.w = w; S.h = h; S.dpr = dpr;
+  S.cx = w / 2;
+  S.cy = h * 0.478;
+  S.R  = Math.max(110, Math.min(w * 0.40, h * 0.30));
+  S.bezelR = S.R * 1.13;
+  S.PPM = S.R / 1.4;
+  S.rBase = Math.max(9, Math.min(S.R * 0.085, 26));
+
+  if (oldR){
+    const kR = S.R / oldR;
+    for (const b of balls){
+      b.x = S.cx + (b.x - oldCx) * kR;
+      b.y = S.cy + (b.y - oldCy) * kR;
+      b.vx *= kR; b.vy *= kR;
+      b.r = S.rBase * b.k;
+      b.trail.length = 0;
+    }
+  }
+  buildGradients();
+}
+
+function addBall(atX, atY){
+  if (balls.length >= MAXB) return;
+  const b = spawnBall(nextPi++ % PALETTE.length, atX, atY);
+  if (!b) return;
+  b.born = performance.now();
+  buildBallGfx(b);
+  balls.push(b);
+  btnStates();
+}
+
+function removeBall(){
+  if (balls.length <= MINB) return;
+  const idx = balls.length - 1;
+  if (drag.on && drag.idx === idx){ drag.on = false; cv.style.cursor = 'default'; }
+  balls.pop();
+  if (drag.on && drag.idx > idx - 1) drag.on = false;
+  btnStates();
+}
+
+function btnStates(){
+  el('b-add').disabled = balls.length >= MAXB;
+  el('b-del').disabled = balls.length <= MINB;
+}
+
+function reset(){
+  const n = Math.max(MINB, balls.length || 3);
+  balls.length = 0;
+  ripples.length = 0;
+  S.impacts = 0;
+  nextPi = 0;
+  for (let i = 0; i < n; i++) addBall();
+}
+
+/* ── взаимодействие ──────────────────────────────────────── */
+function pt(e){
+  const r = cv.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+const grabR = b => Math.max(44, b.r * 2.4);
+
+function ballAt(x, y){
+  let best = -1, bd = 1e9;
+  for (let i = 0; i < balls.length; i++){
+    const d = Math.hypot(x - balls[i].x, y - balls[i].y);
+    if (d < grabR(balls[i]) && d < bd){ bd = d; best = i; }
+  }
+  return best;
+}
+
+cv.addEventListener('pointerdown', e => {
+  const p = pt(e);
+  const i = ballAt(p.x, p.y);
+  if (i >= 0){
+    const b = balls[i];
+    drag.on = true; drag.idx = i; drag.id = e.pointerId;
+    drag.offx = p.x - b.x; drag.offy = p.y - b.y;
+    drag.x = b.x; drag.y = b.y;
+    drag.px = p.x; drag.py = p.y;
+    drag.vx = 0; drag.vy = 0;
+    drag.lastT = performance.now();
+    cv.style.cursor = 'grabbing';
+    try { cv.setPointerCapture(e.pointerId); } catch(_){}
+    e.preventDefault();
+  }
+});
+
+cv.addEventListener('pointermove', e => {
+  const p = pt(e);
+  if (drag.on && e.pointerId === drag.id){
+    const now = performance.now();
+    const dt = Math.max(1, now - drag.lastT) / 1000;
+    const ivx = (p.x - drag.px) / dt, ivy = (p.y - drag.py) / dt;
+    drag.vx = drag.vx * 0.55 + ivx * 0.45;
+    drag.vy = drag.vy * 0.55 + ivy * 0.45;
+    drag.x = p.x - drag.offx; drag.y = p.y - drag.offy;
+    drag.px = p.x; drag.py = p.y;
+    drag.lastT = now;
+  } else if (!drag.on){
+    cv.style.cursor = ballAt(p.x, p.y) >= 0 ? 'grab' : 'default';
+  }
+});
+
+function endDrag(e){
+  if (!drag.on || e.pointerId !== drag.id) return;
+  drag.on = false;
+  const b = balls[drag.idx];
+  if (b){
+    const sp = Math.hypot(drag.vx, drag.vy);
+    const k = sp > 4200 ? 4200 / sp : 1;
+    b.vx = drag.vx * k;
+    b.vy = drag.vy * k;
+  }
+  cv.style.cursor = 'grab';
+  hintUsed();
+}
+cv.addEventListener('pointerup', endDrag);
+cv.addEventListener('pointercancel', endDrag);
+cv.addEventListener('contextmenu', e => e.preventDefault());
+
+cv.addEventListener('dblclick', e => {
+  const p = pt(e);
+  if (ballAt(p.x, p.y) >= 0) return;
+  computeVerts();
+  if (!insideOctagon(p.x, p.y, S.rBase + 6)) return;
+  addBall(p.x, p.y);
+  hintUsed();
+});
+
+addEventListener('keydown', e => {
+  const tag = e.target && e.target.tagName;
+  if (tag === 'INPUT' || tag === 'BUTTON') return;
+  if (e.code === 'Space'){ e.preventDefault(); setPaused(!S.paused); }
+  else if (e.code === 'KeyR'){ reset(); }
+});
+
+let hintDone = false;
+function hintUsed(){
+  if (hintDone) return;
+  hintDone = true;
+  el('hint').classList.add('hide');
+}
+setTimeout(hintUsed, 18000);
+
+/* ── панель управления ───────────────────────────────────── */
+function bind(sid, oid, fmt, set){
+  const s = el(sid), o = el(oid);
+  const f = () => { const v = parseFloat(s.value); set(v); o.textContent = fmt(v); };
+  s.addEventListener('input', f);
+  f();
+}
+bind('s-rot',  'v-rot',  v => v.toFixed(1) + ' об/мин', v => S.rpm  = v);
+bind('s-grav', 'v-grav', v => v.toFixed(2) + ' g',      v => S.gMul = v);
+bind('s-rest', 'v-rest', v => Math.round(v * 100) + '%',v => S.rest = v);
+bind('s-mu',   'v-mu',   v => v.toFixed(2),             v => S.mu   = v);
+
+function setPaused(p){
+  S.paused = p;
+  el('i-pause').style.display = p ? 'none' : 'block';
+  el('i-play').style.display  = p ? 'block' : 'none';
+  el('b-pause').classList.remove('pulse');
+  acc = 0;
+}
+el('b-pause').addEventListener('click', () => setPaused(!S.paused));
+el('b-reset').addEventListener('click', reset);
+el('b-add').addEventListener('click', () => addBall());
+el('b-del').addEventListener('click', removeBall);
+el('b-trail').addEventListener('click', () => {
+  S.trail = !S.trail;
+  const b = el('b-trail');
+  b.classList.toggle('on', S.trail);
+  b.setAttribute('aria-pressed', String(S.trail));
+});
+el('b-sound').addEventListener('click', () => {
+  S.sound = !S.sound;
+  if (S.sound) ensureAudio();
+  const b = el('b-sound');
+  b.classList.toggle('on', S.sound);
+  b.setAttribute('aria-pressed', String(S.sound));
+  updSoundIcon();
+});
+function updSoundIcon(){
+  const svg = el('b-sound').querySelector('svg');
+  svg.querySelector('.wv').style.display = S.sound ? '' : 'none';
+  svg.querySelector('.sl').style.display = S.sound ? 'none' : '';
+}
+
+/* ── рендер ──────────────────────────────────────────────── */
+function nearestWall(b){
+  let bd = 1e9, bqx = 0, bqy = 0, bex = 1, bey = 0;
+  for (let i = 0; i < SIDES; i++){
+    const ax = VX[i], ay = VY[i], bx = VX[i+1], by = VY[i+1];
+    const ex = bx - ax, ey = by - ay;
+    let t = ((b.x - ax) * ex + (b.y - ay) * ey) / (ex*ex + ey*ey);
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const qx = ax + ex * t, qy = ay + ey * t;
+    const d = Math.hypot(b.x - qx, b.y - qy);
+    if (d < bd){ bd = d; bqx = qx; bqy = qy; bex = ex; bey = ey; }
+  }
+  return { d: bd, qx: bqx, qy: bqy, ang: Math.atan2(bey, bex) };
+}
+
+function drawBall(b, now){
+  const pal = PALETTE[b.pi];
+  let r = b.r;
+  if (b.born){
+    const f = Math.min(1, (now - b.born) / 220);
+    r = b.r * (0.3 + 0.7 * (1 - (1 - f) * (1 - f)));
+    if (f >= 1) b.born = 0;
+  }
+
+  // контактная тень на ближайшей стене
+  const nw = nearestWall(b);
+  const gap = nw.d - b.r;
+  if (gap < b.r * 1.6){
+    const a = Math.max(0, 1 - gap / (b.r * 1.6)) * 0.34;
+    ctx.save();
+    ctx.translate(nw.qx, nw.qy);
+    ctx.rotate(nw.ang);
+    ctx.globalAlpha = a;
+    ctx.drawImage(darkSprite, -b.r * 1.7, -b.r * 0.72, b.r * 3.4, b.r * 1.44);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // ореол
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.42;
+  ctx.drawImage(glowSprites[b.pi], b.x - r * 2.6, b.y - r * 2.6, r * 5.2, r * 5.2);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
+
+  // сфера
+  ctx.save();
+  ctx.translate(b.x, b.y);
+  if (r !== b.r) ctx.scale(r / b.r, r / b.r);
+  ctx.beginPath(); ctx.arc(0, 0, b.r, 0, TAU);
+  ctx.fillStyle = b.grad; ctx.fill();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.stroke();
+
+  // метки вращения
+  ctx.save();
+  ctx.rotate(b.ang);
+  ctx.strokeStyle = pal.ring;
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, 0, b.r * 0.56, 0, TAU); ctx.stroke();
+  for (let i = 0; i < 3; i++){
+    const a = i * TAU / 3;
+    ctx.fillStyle = i === 0 ? pal.accent : pal.marker;
+    ctx.beginPath();
+    ctx.arc(Math.cos(a) * b.r * 0.56, Math.sin(a) * b.r * 0.56, b.r * (i === 0 ? 0.1 : 0.11), 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // блик (свет фиксирован)
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.beginPath(); ctx.arc(-b.r * 0.3, -b.r * 0.34, b.r * 0.34, 0, TAU); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.beginPath(); ctx.arc(-b.r * 0.34, -b.r * 0.4, b.r * 0.13, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+
+function render(dt, now){
+  const { w, h, cx, cy } = S;
+
+  ctx.fillStyle = bgGrad;  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = ambGrad; ctx.fillRect(0, 0, w, h);
+
+  // безель + маркер угла
+  const bs = bezelHalf;
+  ctx.drawImage(bezelCv, cx - bs, cy - bs, bs * 2, bs * 2);
+  const ma = S.theta;
+  const mx = cx + Math.cos(ma) * S.bezelR;
+  const my = cy + Math.sin(ma) * S.bezelR;
+  ctx.globalAlpha = 0.5;
+  ctx.drawImage(glowSprites[0], mx - 13, my - 13, 26, 26);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#ecd096';
+  ctx.beginPath(); ctx.arc(mx, my, 2.4, 0, TAU); ctx.fill();
+
+  // восьмиугольник
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(S.theta);
+  ctx.beginPath();
+  ctx.moveTo(LOC[0].x, LOC[0].y);
+  for (let i = 1; i < SIDES; i++) ctx.lineTo(LOC[i].x, LOC[i].y);
+  ctx.closePath();
+  ctx.fillStyle = octFill; ctx.fill();
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(216,181,122,0.06)'; ctx.lineWidth = 9;   ctx.stroke();
+  ctx.strokeStyle = octGrad;                  ctx.lineWidth = 1.8; ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(LOC2[0].x, LOC2[0].y);
+  for (let i = 1; i < SIDES; i++) ctx.lineTo(LOC2[i].x, LOC2[i].y);
+  ctx.closePath();
+  ctx.strokeStyle = 'rgba(236,231,218,0.05)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = '#e6c68c';
+  for (let i = 0; i < SIDES; i++){
+    ctx.beginPath(); ctx.arc(LOC[i].x, LOC[i].y, 2.1, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+
+  // следы
+  if (S.trail){
+    ctx.globalCompositeOperation = 'lighter';
+    for (const b of balls){
+      const tr = b.trail;
+      if (tr.length < 2) continue;
+      const rgb = PALETTE[b.pi].trail;
+      for (let i = 0; i < tr.length; i++){
+        const f = (i + 1) / tr.length;
+        ctx.fillStyle = 'rgba(' + rgb + ',' + (f * f * 0.1).toFixed(3) + ')';
+        ctx.beginPath();
+        ctx.arc(tr[i].x, tr[i].y, b.r * (0.18 + 0.62 * f), 0, TAU);
+        ctx.fill();
+      }
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // круги-отклики ударов
+  for (let i = ripples.length - 1; i >= 0; i--){
+    const p = ripples[i];
+    p.r += p.v * dt;
+    p.a -= p.a * 3.4 * dt;
+    if (p.a < 0.012){ ripples.splice(i, 1); continue; }
+    ctx.strokeStyle = 'rgba(232,206,146,' + p.a.toFixed(3) + ')';
+    ctx.lineWidth = 1.25;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = 'rgba(232,206,146,' + (p.a * 0.5).toFixed(3) + ')';
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r * 0.72, 0, TAU); ctx.stroke();
+  }
+
+  // мячи
+  computeVerts();
+  for (const b of balls) drawBall(b, now);
+
+  // виньетка
+  ctx.fillStyle = vinGrad;
+  ctx.fillRect(0, 0, w, h);
+}
+
+/* ── HUD ─────────────────────────────────────────────────── */
+let hudT = 0;
+function updHud(){
+  let sum = 0;
+  for (const b of balls) sum += Math.hypot(b.vx, b.vy);
+  const avg = balls.length ? sum / balls.length : 0;
+  el('h-balls').textContent = String(balls.length);
+  el('h-speed').textContent = (avg / S.PPM).toFixed(2) + ' м/с';
+  el('h-imp').textContent   = String(S.impacts);
+  el('h-fps').textContent   = Math.round(S.fps) + ' к/с';
+}
+
+/* ── главный цикл ────────────────────────────────────────── */
+let last = performance.now(), acc = 0;
+
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.05) dt = 0.05;
+  if (dt > 0) S.fps = S.fps * 0.92 + (1 / dt) * 0.08;
+
+  // удерживаемый мяч: позиция от указателя, скорость — отслеженная
+  if (drag.on){
+    const b = balls[drag.idx];
+    if (performance.now() - drag.lastT > 50){ drag.vx *= 0.85; drag.vy *= 0.85; }
+    b.x = drag.x; b.y = drag.y;
+    const sp = Math.hypot(drag.vx, drag.vy);
+    const k = sp > 4200 ? 4200 / sp : 1;
+    b.vx = drag.vx * k; b.vy = drag.vy * k;
+  }
+
+  if (!S.paused){
+    acc += dt;
+    while (acc >= FIXED_DT){ substep(FIXED_DT); acc -= FIXED_DT; }
+  } else if (drag.on){
+    // в паузе: только позиционное расталкивание
+    const b = balls[drag.idx];
+    computeVerts();
+    collideWall(b, FIXED_DT, true);
+    for (const o of balls){ if (o !== b) collidePair(b, o, true); }
+  }
+
+  if (drag.on){
+    const b = balls[drag.idx];
+    drag.x = b.x; drag.y = b.y;   // принять выталкивание стенами
+  }
+
+  if (!S.paused){
+    for (const b of balls){
+      const spd = Math.hypot(b.vx, b.vy);
+      if (spd > S.PPM * 0.3 || isKin(b)){
+        b.trail.push({ x: b.x, y: b.y });
+        if (b.trail.length > 26) b.trail.shift();
+      } else if (b.trail.length){
+        b.trail.shift();
+      }
+    }
+  }
+
+  render(dt, now);
+
+  hudT += dt;
+  if (hudT > 0.12){ hudT = 0; updHud(); }
+}
+
+/* ── запуск ──────────────────────────────────────────────── */
+addEventListener('resize', resize);
+document.addEventListener('visibilitychange', () => { last = performance.now(); });
+
+resize();
+reset();
+updSoundIcon();
+btnStates();
+
+if (matchMedia('(prefers-reduced-motion: reduce)').matches){
+  setPaused(true);
+  el('b-pause').classList.add('pulse');
+}
+
+requestAnimationFrame(frame);
+requestAnimationFrame(() => document.body.classList.add('ready'));
+</script>
+</body>
+</html>
