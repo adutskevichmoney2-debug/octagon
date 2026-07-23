@@ -27,12 +27,12 @@
   :focus-visible{ outline:1px solid rgba(216,181,122,.75); outline-offset:3px; border-radius:4px; }
 
   #stage{ position:fixed; inset:0; }
-  canvas{
+  #cv{
     position:absolute; inset:0; display:block;
     touch-action:none; cursor:default;
     opacity:0; transition:opacity 1.6s ease .1s;
   }
-  body.ready canvas{ opacity:1; }
+  body.ready #cv{ opacity:1; }
 
   /* ── film grain ─────────────────────────────────────────── */
   .grain{
@@ -219,7 +219,7 @@
     .sub{ display:none; }
   }
   @media (prefers-reduced-motion: reduce){
-    .fx, canvas{ transition:none; }
+    .fx, #cv{ transition:none; }
   }
 </style>
 </head>
