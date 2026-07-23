@@ -166,6 +166,10 @@
   }
   .btns button:disabled{ opacity:.28; pointer-events:none; }
   .btns svg{ width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+  .btns button.txt{ font-family:'JetBrains Mono', monospace; font-size:10.5px; font-weight:500; }
+  #spark-wrap{ padding:9px 1px 4px; border-bottom:1px solid rgba(236,231,218,.07); }
+  #spark-wrap .k{ font-size:9px; letter-spacing:.18em; color:#7c786c; text-transform:uppercase; display:block; margin-bottom:7px; }
+  #spark{ display:block; width:100%; height:30px; }
   button.pulse{ animation:pulse 2.2s ease-in-out infinite; }
   @keyframes pulse{
     0%,100%{ box-shadow:0 0 0 0 rgba(216,181,122,0); }
@@ -221,6 +225,7 @@
       <div class="row"><span class="k">Скорость</span><span class="v" id="h-speed">0.00 м/с</span></div>
       <div class="row"><span class="k">Соударения</span><span class="v" id="h-imp">0</span></div>
       <div class="row"><span class="k">Частота</span><span class="v" id="h-fps">60 к/с</span></div>
+      <div id="spark-wrap"><span class="k">Кин. энергия</span><canvas id="spark"></canvas></div>
     </div>
   </header>
 
@@ -249,6 +254,7 @@
       <button id="b-del" title="Убрать мяч" aria-label="Убрать мяч">
         <svg viewBox="0 0 16 16"><path d="M3.2 8h9.6"/></svg>
       </button>
+      <button id="b-slow" class="txt" title="Замедление времени — S" aria-label="Замедление времени">1×</button>
       <button id="b-pause" title="Пауза — пробел" aria-label="Пауза">
         <svg id="i-pause" viewBox="0 0 16 16"><path d="M5.2 3.2v9.6M10.8 3.2v9.6"/></svg>
         <svg id="i-play" viewBox="0 0 16 16" style="display:none"><path d="M5.4 3.2l7 4.8-7 4.8z"/></svg>
@@ -313,7 +319,7 @@ const S = {
   R:300, bezelR:340, PPM:214, rBase:22,
   theta:0,
   rpm:6, gMul:1, rest:0.86, mu:0.35,
-  trail:true, sound:false, paused:false,
+  trail:true, sound:false, paused:false, timeScale:1,
   impacts:0, fps:60,
 };
 const balls = [];
@@ -840,6 +846,7 @@ function resize(){
     }
   }
   buildGradients();
+  sizeSpark();
 }
 
 function addBall(atX, atY){
@@ -870,6 +877,7 @@ function reset(){
   const n = Math.max(MINB, balls.length || 3);
   balls.length = 0;
   ripples.length = 0;
+  eHist.length = 0;
   S.impacts = 0;
   nextPi = 0;
   for (let i = 0; i < n; i++) addBall();
@@ -955,6 +963,7 @@ addEventListener('keydown', e => {
   if (tag === 'INPUT' || tag === 'BUTTON') return;
   if (e.code === 'Space'){ e.preventDefault(); setPaused(!S.paused); }
   else if (e.code === 'KeyR'){ reset(); }
+  else if (e.code === 'KeyS'){ cycleSlow(); }
 });
 
 let hintDone = false;
@@ -1007,6 +1016,19 @@ function updSoundIcon(){
   svg.querySelector('.wv').style.display = S.sound ? '' : 'none';
   svg.querySelector('.sl').style.display = S.sound ? 'none' : '';
 }
+
+/* слоу-мо: 1× → ½× → ⅕× */
+const SLOW_STEPS  = [1, 0.5, 0.2];
+const SLOW_LABELS = ['1×', '½×', '⅕×'];
+let slowIdx = 0;
+function cycleSlow(){
+  slowIdx = (slowIdx + 1) % SLOW_STEPS.length;
+  S.timeScale = SLOW_STEPS[slowIdx];
+  const b = el('b-slow');
+  b.textContent = SLOW_LABELS[slowIdx];
+  b.classList.toggle('on', slowIdx !== 0);
+}
+el('b-slow').addEventListener('click', cycleSlow);
 
 /* ── рендер ──────────────────────────────────────────────── */
 function nearestWall(b){
@@ -1087,6 +1109,7 @@ function drawBall(b, now){
 
 function render(dt, now){
   const { w, h, cx, cy } = S;
+  const wdt = dt * S.timeScale;   // мировое время (учёт слоу-мо)
 
   ctx.fillStyle = bgGrad;  ctx.fillRect(0, 0, w, h);
   ctx.fillStyle = ambGrad; ctx.fillRect(0, 0, w, h);
@@ -1147,8 +1170,8 @@ function render(dt, now){
   // круги-отклики ударов
   for (let i = ripples.length - 1; i >= 0; i--){
     const p = ripples[i];
-    p.r += p.v * dt;
-    p.a -= p.a * 3.4 * dt;
+    p.r += p.v * wdt;
+    p.a -= p.a * 3.4 * wdt;
     if (p.a < 0.012){ ripples.splice(i, 1); continue; }
     ctx.strokeStyle = 'rgba(232,206,146,' + p.a.toFixed(3) + ')';
     ctx.lineWidth = 1.25;
@@ -1164,6 +1187,60 @@ function render(dt, now){
   // виньетка
   ctx.fillStyle = vinGrad;
   ctx.fillRect(0, 0, w, h);
+}
+
+/* ── график кинетической энергии ─────────────────────────── */
+const SPARK_N = 220;
+const sparkCv = el('spark');
+const sctx = sparkCv.getContext('2d');
+const eHist = [];
+let eFrame = 0;
+
+function kineticEnergy(){
+  let E = 0;
+  for (const b of balls){
+    const v2 = (b.vx * b.vx + b.vy * b.vy) / (S.PPM * S.PPM);
+    const rM = b.r / S.PPM;
+    E += 0.5 * b.m * v2 + 0.25 * b.m * rM * rM * b.spin * b.spin;
+  }
+  return E;
+}
+
+function sizeSpark(){
+  const w = sparkCv.clientWidth, h = sparkCv.clientHeight;
+  if (!w || !h) return;
+  sparkCv.width  = Math.round(w * S.dpr);
+  sparkCv.height = Math.round(h * S.dpr);
+}
+
+function drawSpark(){
+  const W = sparkCv.width, H = sparkCv.height;
+  if (!W || !H) return;
+  sctx.setTransform(1, 0, 0, 1, 0, 0);
+  sctx.clearRect(0, 0, W, H);
+  const n = eHist.length;
+  if (n < 2) return;
+  let max = 1e-6;
+  for (let i = 0; i < n; i++) if (eHist[i] > max) max = eHist[i];
+  sctx.strokeStyle = 'rgba(236,231,218,0.09)';
+  sctx.lineWidth = 1;
+  sctx.beginPath(); sctx.moveTo(0, H - 0.5); sctx.lineTo(W, H - 0.5); sctx.stroke();
+  sctx.beginPath();
+  let lastX = 1;
+  for (let i = 0; i < n; i++){
+    const x = (i / (SPARK_N - 1)) * (W - 2) + 1;
+    const y = H - 2 - (eHist[i] / max) * (H - 6);
+    if (i === 0) sctx.moveTo(x, y); else sctx.lineTo(x, y);
+    lastX = x;
+  }
+  sctx.strokeStyle = 'rgba(216,181,122,0.85)';
+  sctx.lineWidth = Math.max(1, S.dpr * 0.75);
+  sctx.stroke();
+  sctx.lineTo(lastX, H);
+  sctx.lineTo(1, H);
+  sctx.closePath();
+  sctx.fillStyle = 'rgba(216,181,122,0.08)';
+  sctx.fill();
 }
 
 /* ── HUD ─────────────────────────────────────────────────── */
@@ -1199,7 +1276,7 @@ function frame(now){
   }
 
   if (!S.paused){
-    acc += dt;
+    acc += dt * S.timeScale;
     while (acc >= FIXED_DT){ substep(FIXED_DT); acc -= FIXED_DT; }
   } else if (drag.on){
     // в паузе: только позиционное расталкивание
@@ -1227,6 +1304,14 @@ function frame(now){
   }
 
   render(dt, now);
+
+  if (++eFrame % 3 === 0){
+    if (!S.paused){
+      eHist.push(kineticEnergy());
+      if (eHist.length > SPARK_N) eHist.shift();
+    }
+    drawSpark();
+  }
 
   hudT += dt;
   if (hudT > 0.12){ hudT = 0; updHud(); }
